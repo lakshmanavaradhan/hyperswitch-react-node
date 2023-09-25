@@ -17,9 +17,27 @@ app.post("/create-payment", async (req, res) => {
      For accessing more features, you can check out the request body schema for payments-create API here :
      https://api-reference.hyperswitch.io/docs/hyperswitch-api-reference/60bae82472db8-payments-create
   */
-
+  const AWS = require('aws-sdk');
+  AWS.config.update({
+    region: 'us-east-1',
+  });
+  let API_KEY;
+  const secretsManager = new AWS.SecretsManager();
+  const secretName = 'HYPERSWITCH';
+  secretsManager.getSecretValue({ SecretId: secretName }, (err, data) => {
+        if (err) {
+                console.error('Error retrieving secret:', err);
+        } else {
+                // Parse the secret JSON or plaintext, depending on how it's stored
+                const secretValue = JSON.parse(data.SecretString || '{}');
+                const API_KEY = secretValue.HYPERSWITCH_API_KEY;
+                console.log('KEY:', API_KEY);
+        } });
   const hyperswitch_url = "https://sandbox.hyperswitch.io/payments";
-  const hyperswitch_api_key = "HYPERSWITCH_API_KEY"; // Replace with your actual API key provided by Hyperswitch
+  const hyperswitch_api_key = API_KEY;
+
+//  const hyperswitch_url = "https://sandbox.hyperswitch.io/payments";
+//  const hyperswitch_api_key = "HYPERSWITCH_API_KEY"; // Replace with your actual API key provided by Hyperswitch
 
   const payload = {
     amount: calculateOrderAmount(items),

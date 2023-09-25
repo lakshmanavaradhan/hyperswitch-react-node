@@ -4,7 +4,24 @@ import { HyperElements } from "@juspay-tech/react-hyper-js";
 import './App.css';
 import CheckoutForm from "./CheckoutForm";
 
-const hyperPromise = loadHyper("HYPERSWITCH_PUBLISHABLE_KEY");
+  const AWS = require('aws-sdk');
+  AWS.config.update({
+    region: 'us-east-1',
+  });
+  let PUBLISHABLE_KEY;
+  const secretsManager = new AWS.SecretsManager();
+  const secretName = 'HYPERSWITCH';
+  secretsManager.getSecretValue({ SecretId: secretName }, (err, data) => {
+        if (err) {
+                console.error('Error retrieving secret:', err);
+        } else {
+                // Parse the secret JSON or plaintext, depending on how it's stored
+                const secretValue = JSON.parse(data.SecretString || '{}');
+                const PUBLISHABLE_KEY = secretValue.HYPERSWITCH_PUBLISHABLE_KEY;
+                console.log('KEY:', PUBLISHABLE_KEY);
+        } });
+
+const hyperPromise = loadHyper(PUBLISHABLE_KEY);
 
 function App() {
   const [options, setOptions] = useState(null);
