@@ -1,0 +1,103 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: dockerhub-secret
+type: kubernetes.io/dockerconfigjson
+data:
+  .dockerconfigjson: ewoJImF1dGhzIjogewoJCSJodHRwczovL2luZGV4LmRvY2tlci5pby92MS8iOiB7CgkJCSJhdXRoIjogImNtVmhaR3huT25KbFlXUnNaekV5TXc9PSIKCQl9Cgl9Cn0=
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hyperapp-deploy
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: hyperapp
+  template:
+    metadata:
+      labels:
+        app: hyperapp
+    spec:
+      containers:
+      - name: app
+        image: readlg/testapp:latest
+        ports:
+        - containerPort: 3000
+      imagePullSecrets:
+      - name: dockerhub-secret
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: hyperapp-scale
+  namespace: default
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: hyperapp
+  maxReplicas: 3
+  minReplicas: 1
+  metrics:
+  - resource:
+      name: cpu
+      target:
+        averageUtilization: 25
+        type: Utilization
+    type: Resource
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hyperapp-service
+spec:
+  selector:
+    app: hyperapp
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 3000
+  type: NodePort
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: test-selfsigned
+  namespace: default
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: selfsigned-cert
+  namespace: default
+spec:
+  dnsNames:
+    -  hyperapp.lg
+  secretName: hyperapp-lg
+  issuerRef:
+    name: test-selfsigned
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hyperapp-ingress
+spec:
+  tls:
+  - hosts:
+    - hyperapp.lg
+    secretName: hyperapp-lg
+  rules:
+  - host: hyperapp.lg
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: hyperapp-service
+            port:
+              number: 80
