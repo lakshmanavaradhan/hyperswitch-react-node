@@ -3,7 +3,7 @@ name: SecOps
 on:
   push:
     branches:
-      - pipeline
+      - main
 
 jobs:
   SCA_SAST :
