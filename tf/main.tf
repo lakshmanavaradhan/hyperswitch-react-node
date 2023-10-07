@@ -158,14 +158,13 @@ resource "aws_instance" "hyperapp_instance" {
   }
   user_data = <<EOF
 #!/bin/bash
-sudo apt install awscli -y
 sudo apt install snapd
 sudo snap install microk8s --classic
+sudo snap install aws-cli --classic
 sudo aws s3 cp s3://lg-hyperapp-5ec24429/spec.yaml /home/ubuntu/spec.yaml
 cd /home/ubuntu/
 sudo touch one
 sudo microk8s kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.0/cert-manager.yaml
 sudo microk8s.kubectl apply -f spec.yaml
-sudo touch /var/user_data_completei123
 EOF
 }
