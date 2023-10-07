@@ -1,0 +1,196 @@
+name: SecOps
+
+on:
+  push:
+    branches:
+      - pipeline
+
+jobs:
+  SCA_SAST :
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v2
+
+      - name: Install Dependencies
+        run: npm install
+
+# aduit-ci is more elagent for ci and it never exit with error code 1, if critical vul found. It has option whitelist packages.
+# here i am running npm aduit if critical found, that gives detailed report   
+      - name: SCA
+       #comment continue on error for prod usecase
+        continue-on-error: true
+        run: |
+          set -x
+          npx audit-ci --json > audit-results.json
+          cat audit-results.json
+          CRITICAL_VULNERABILITIES=$(cat audit-results.json | grep critical | awk  '{print $2}' | sed 's/,//g')
+          if [ "$CRITICAL_VULNERABILITIES" -gt 0 ]; then
+            echo "o_0!! - Critical vulnerabilities found!"
+            echo "uncomment npm audit get more detail on vul"
+            #npm aduit
+            #npm aduit fix work for most private repo
+          else
+            echo "No critical vulnerabilities found."
+          fi
+        shell: bash
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v2
+        with:
+          languages: javascript
+
+      - name: SAST
+        uses: github/codeql-action/analyze@v2
+        with:
+          languages: javascript
+
+      - name: SAST-report
+        run: |
+          ls /home/runner/work/hyperswitch-react-node/results/javascript.sarif
+          cp /home/runner/work/hyperswitch-react-node/results/javascript.sarif sast.sarif
+          pip install sarif-tools
+          ls -lrt
+          #sarif query -p results.sarif "runs[0].results[] | select(.level == 'warning')"
+          # need to work on it 
+          #
+  Docker_build_scan_k8scan_DAST:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Out Code
+        uses: actions/checkout@v3
+
+      - name: Build hyper app container
+        run: |
+          #.dockerignore is used
+          echo ${{ secrets.DOCKER_PASSWORD }} | docker login -u ${{ secrets.DOCKER_USER }} --password-stdin
+          docker build -t readlg/testapp:1.0.0 .
+          
+      - name: Scan for Docker image vulnerabilities
+        id: scan
+        uses: crazy-max/ghaction-container-scan@v3
+          #comment continue on error for prod usecase
+        continue-on-error: true
+        with:
+          image: readlg/testapp:1.0.0
+          severity_threshold: HIGH
+          annotations: true  
+          #uncomment timeout if scan fails because of db update
+          #timeout: 10
+      - name: push image to registry
+        run: |
+          docker push readlg/testapp:1.0.0
+
+      - name: Scan Kubernetes Manifests
+        uses: kubescape/github-action@main
+        continue-on-error: true
+        with:
+          format: json
+          outputFile: k8-scan-results.json
+
+      - name: run app and do DAST
+        #comment continue on error for prod usecase
+        continue-on-error: true
+        run: |
+          set -x
+          set -e
+          ls -lrt
+          docker run -p 8080:3000 -d readlg/testapp:1.0.0 
+          docker ps
+          mkdir output
+          chmod -R 777 output 
+          cd output 
+          docker run --net=host -v $(pwd):/zap/wrk/:rw -t owasp/zap2docker-weekly zap-baseline.py -t http://localhost:8080 -m 2 -a -J zap-report.json
+
+      - name: process DAST outfie
+        run: |
+          set -x
+          ls -lrt
+          #RISK_CODE=$(jq '.site[].alerts[].riskcode' output/zap-report.json | uniq | grep 4 )
+          RISK_CODE=$(grep '"riskcode": "4",'  output/zap-report.json | wc -l )
+          if [ "$RISK_CODE" == 0 ]; then
+            echo "No findings with risk code 4."
+          else
+            echo "Found risk code 4:"
+            echo "NOT fit for prod!"
+            exit
+          fi
+  AWS-cloud:
+    needs: [ SCA_SAST, Docker_build_scan_k8scan_DAST ]
+    runs-on: ubuntu-latest
+    env:
+      API_KEY: ${{ secrets.API_KEY }}
+      P_KEY:   ${{ secrets.P_KEY }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESSKEY }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET }}
+      DOCKER_READ: ${{ secrets.DOCKER_READ }}
+      TAG: ${{ secrets.TAG }}
+      TF_VARFILE: ${{ secrets.TF_VARFILE }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up AWS CLI
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESSKEY }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET }}
+          aws-region: us-east-1
+
+      - name: Store Secret in AWS Secrets Manager
+        run: |
+          set -x
+          aws secretsmanager describe-secret --secret-id HYPERSWITCH >/dev/null 2>&1
+          if [ $? -eq 0 ]; then
+            aws secretsmanager update-secret --secret-id HYPERSWITCH --secret-string '{"HYPERSWITCH_PUBLISHABLE_KEY": "'"${API_KEY}"'", "HYPERSWITCH_API_KEY": "'"${P_KEY}"'" }'
+          else
+            aws secretsmanager create-secret --name HYPERSWITCH --secret-string '{"HYPERSWITCH_PUBLISHABLE_KEY": "'"${API_KEY}"'", "HYPERSWITCH_API_KEY": "'"${P_KEY}"'" }' 
+          fi
+
+      - name: create s3 tf_state bucket & render spec.yaml
+        run: |
+          #python jija2 also can be used
+          sed -i "s/docker_secert/${DOCKER_READ}/g" spec.yaml  
+          sed -i "s/itag/$TAG/g" spec.yaml
+          cat spec.yaml
+          bucket_name=hyperapp-tfstate
+          aws s3api head-bucket --bucket "$bucket_name" --region us-east-1 2>/dev/null
+          if [ $? -ne 0 ]; then
+            aws s3api create-bucket --bucket "$bucket_name" --region us-east-1
+            echo "Bucket '$bucket_name' created successfully."
+          else
+             echo "Bucket '$bucket_name' already exists."
+          fi
+      - name: Set up Python
+        uses: actions/setup-python@v2
+
+      - name: get_teraform_varaibles
+        run: |
+          set -x 
+          cd tf 
+          env
+          ls -lrt
+          python3 --version
+          python3 get_variable.py
+          cat terraform.tfvars
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v1
+
+      - name: Terraform exec
+        run: | 
+          set -x
+          cd tf
+          pwd
+          ls -lrt
+          terraform init
+          #terraform destroy -auto-approve
+          terraform plan -out=hyperapp
+          terraform apply -auto-approve hyperapp
+
+

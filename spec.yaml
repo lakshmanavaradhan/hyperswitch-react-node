@@ -4,7 +4,7 @@ metadata:
   name: dockerhub-secret
 type: kubernetes.io/dockerconfigjson
 data:
-  .dockerconfigjson: ewoJImF1dGhzIjogewoJCSJodHRwczovL2luZGV4LmRvY2tlci5pby92MS8iOiB7CgkJCSJhdXRoIjogImNtVmhaR3huT25KbFlXUnNaekV5TXc9PSIKCQl9Cgl9Cn0=
+  .dockerconfigjson: docker_secert
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -22,7 +22,7 @@ spec:
     spec:
       containers:
       - name: app
-        image: readlg/testapp:latest
+        image: readlg/testapp:itag
         ports:
         - containerPort: 3000
       imagePullSecrets:
