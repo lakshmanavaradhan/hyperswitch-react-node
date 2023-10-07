@@ -158,6 +158,7 @@ resource "aws_instance" "hyperapp_instance" {
   }
   user_data = <<EOF
 #!/bin/bash
+sudo apt install awscli -y
 sudo apt install snapd
 sudo snap install microk8s --classic
 sudo aws s3 cp s3://lg-hyperapp-5ec24429/spec.yaml /home/ubuntu/spec.yaml
